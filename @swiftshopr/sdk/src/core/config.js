@@ -1,6 +1,9 @@
 // @swiftshopr/sdk/src/core/config.js
 import { http } from 'viem';
-import { base } from 'viem/chains';
+
+// Base chain ID - we don't import from viem/chains to avoid bundling 200+ chain definitions
+// which causes Metro bundler issues with the ox package
+const BASE_CHAIN_ID = 8453;
 
 export const DEFAULT_NETWORK = 'base';
 
@@ -91,7 +94,7 @@ export const createCDPConfig = ({
       ],
     },
     transports: {
-      [base.id]: http(defaultRpcUrl),
+      [BASE_CHAIN_ID]: http(defaultRpcUrl),
     },
     appName,
   };

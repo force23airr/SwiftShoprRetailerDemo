@@ -1,7 +1,17 @@
 // @swiftshopr/sdk/src/core/balance.js
 import { createPublicClient, http, formatUnits } from 'viem';
-import { base } from 'viem/chains';
 import { getRpcEndpoints, getUSDCAddress } from './config';
+
+// Minimal Base chain config - avoids importing viem/chains which bundles 200+ chains
+// and causes Metro bundler issues with the ox package
+const baseChain = {
+  id: 8453,
+  name: 'Base',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: {
+    default: { http: ['https://mainnet.base.org'] },
+  },
+};
 
 const USDC_DECIMALS = 6;
 
@@ -80,7 +90,7 @@ export const clearCachedBalance = () => {
 
 const createFreshClient = (endpoint) => {
   return createPublicClient({
-    chain: base,
+    chain: baseChain,
     transport: http(endpoint, {
       timeout: 8000,
       retryCount: 1,
