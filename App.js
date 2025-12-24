@@ -1,796 +1,306 @@
-import React, { useState, useEffect } from 'react';
+/**
+ * SwiftShopr Retailer Demo App
+ *
+ * This demo shows how a retailer integrates the @swiftshopr/sdk
+ * into their mobile app for Scan & Go checkout with USDC payments.
+ *
+ * The retailer only needs to:
+ * 1. Wrap their app in SwiftShoprProvider with their config
+ * 2. Drop in ScanAndGoScreen (or individual components)
+ * 3. Handle the onComplete callback
+ */
+
+import React, { useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import {
   StyleSheet,
   Text,
   View,
   TouchableOpacity,
-  FlatList,
-  TextInput,
-  Alert,
-  ActivityIndicator,
-  ScrollView,
   SafeAreaView,
+  Alert,
 } from 'react-native';
-import { SwiftShoprClient } from 'swiftshopr-payments';
 
-// Initialize SDK with your test API key
-const client = new SwiftShoprClient({
-  apiKey: 'sk_test_ross_2024', // Test key for ROSS chain
-  environment: 'production',   // Points to your Render backend
-});
+// Import from the SwiftShopr SDK
+import { SwiftShoprProvider } from './@swiftshopr/sdk/src/components/SwiftShoprProvider';
+import ScanAndGoScreen from './@swiftshopr/sdk/src/components/ScanAndGoScreen';
 
-// Demo store configuration
-const DEMO_STORE = {
-  id: 'ROSS001',
-  name: 'Ross Dress for Less',
-  chainId: 'ROSS',
+// ============================================
+// RETAILER CONFIGURATION
+// ============================================
+// In production, these would come from the retailer's environment
+const RETAILER_CONFIG = {
+  // CDP Project ID from Coinbase Developer Platform
+  projectId: '2845a1fd-f272-448b-8d4e-386f1906dfbd',
+
+  // SwiftShopr Backend API
+  apiBaseUrl: 'https://shopr-scanner-backend.onrender.com',
+  apiKey: 'sk_test_ross_2024', // Retailer's API key
+
+  // Network configuration
+  network: 'base', // 'base' for mainnet, 'base-sepolia' for testnet
+
+  // App name for wallet
+  appName: 'Target Demo',
 };
 
+// Demo store info
+const DEMO_STORE = {
+  id: 'TARGET001',
+  name: 'Target - Demo Store',
+  primaryColor: '#CC0000', // Target red
+};
+
+// ============================================
+// MAIN APP
+// ============================================
 export default function App() {
-  const [screen, setScreen] = useState('cart'); // cart, lookup, payment, receipt
-  const [cart, setCart] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [barcode, setBarcode] = useState('');
-  const [paymentIntent, setPaymentIntent] = useState(null);
-  const [receipt, setReceipt] = useState(null);
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [lastReceipt, setLastReceipt] = useState(null);
 
-  // Calculate totals
-  const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const tax = subtotal * 0.08; // 8% tax
-  const total = subtotal + tax;
+  // Handle successful checkout
+  const handleCheckoutComplete = (result) => {
+    console.log('Checkout complete:', result);
 
-  // Look up product by barcode
-  const lookupProduct = async () => {
-    if (!barcode.trim()) {
-      Alert.alert('Error', 'Please enter a barcode');
-      return;
-    }
+    setLastReceipt({
+      orderId: result.orderId,
+      txHash: result.txHash,
+      total: result.total,
+      itemCount: result.items?.length || 0,
+      receiptId: result.receipt?.receiptId,
+    });
 
-    setLoading(true);
-    try {
-      const result = await client.products.lookup(barcode.trim());
+    setShowCheckout(false);
 
-      if (result.success && result.product) {
-        const product = result.product;
-
-        // Check if already in cart
-        const existingIndex = cart.findIndex(item => item.barcode === product.barcode);
-
-        if (existingIndex >= 0) {
-          // Increment quantity
-          const newCart = [...cart];
-          newCart[existingIndex].quantity += 1;
-          setCart(newCart);
-        } else {
-          // Add new item
-          setCart([...cart, {
-            barcode: product.barcode,
-            name: product.name,
-            price: product.price,
-            quantity: 1,
-          }]);
-        }
-
-        setBarcode('');
-        Alert.alert('Added', `${product.name} - $${product.price.toFixed(2)}`);
-      } else {
-        Alert.alert('Not Found', 'Product not found in database');
-      }
-    } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to lookup product');
-    } finally {
-      setLoading(false);
-    }
+    Alert.alert(
+      'Order Complete!',
+      `Transaction: ${result.txHash?.slice(0, 10)}...\nTotal: $${result.total?.toFixed(2)}`,
+      [{ text: 'OK' }]
+    );
   };
 
-  // Create payment session (starts the onramp flow)
-  const startPayment = async () => {
-    if (cart.length === 0) {
-      Alert.alert('Empty Cart', 'Add items to your cart first');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Create an onramp session via the SDK
-      const session = await client.payments.createSession({
-        storeId: DEMO_STORE.id,
-        amount: total,
-        orderId: `DEMO-${Date.now()}`,
-        metadata: {
-          demo: true,
-          store_name: DEMO_STORE.name,
-          items: cart.map(item => ({
-            barcode: item.barcode,
-            name: item.name,
-            quantity: item.quantity,
-            price: item.price,
-          })),
-        },
-      });
-
-      // Store the session/intent for receipt creation later
-      setPaymentIntent({
-        id: session.intentId,
-        sessionId: session.sessionId,
-        orderId: session.orderId,
-        onrampUrl: session.onrampUrl,
-      });
-      setScreen('payment');
-    } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to create payment');
-    } finally {
-      setLoading(false);
-    }
+  // Handle checkout cancellation
+  const handleCheckoutCancel = () => {
+    setShowCheckout(false);
   };
 
-  // Simulate payment completion and create receipt
-  const completePayment = async () => {
-    setLoading(true);
-    try {
-      // In real app, this would be triggered by blockchain confirmation
-      // For demo, we create receipt directly
-      const items = cart.map(item => ({
-        barcode: item.barcode,
-        name: item.name,
-        quantity: item.quantity,
-        price: item.price,
-        total: item.price * item.quantity,
-      }));
-
-      const receiptData = await client.receipts.create({
-        intentId: paymentIntent.id,
-        storeId: DEMO_STORE.id,
-        items: items,
-        subtotal: subtotal,
-        tax: tax,
-        total: total,
-      });
-
-      setReceipt(receiptData);
-      setScreen('receipt');
-    } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to create receipt');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Reset for new transaction
-  const newTransaction = () => {
-    setCart([]);
-    setPaymentIntent(null);
-    setReceipt(null);
-    setScreen('cart');
-  };
-
-  // Remove item from cart
-  const removeItem = (barcode) => {
-    setCart(cart.filter(item => item.barcode !== barcode));
-  };
-
-  // Render cart screen
-  const renderCart = () => (
-    <View style={styles.screenContainer}>
-      <View style={styles.header}>
-        <Text style={styles.storeName}>{DEMO_STORE.name}</Text>
-        <Text style={styles.storeId}>Store: {DEMO_STORE.id}</Text>
-      </View>
-
-      {/* Barcode Input */}
-      <View style={styles.lookupContainer}>
-        <TextInput
-          style={styles.barcodeInput}
-          placeholder="Enter barcode..."
-          value={barcode}
-          onChangeText={setBarcode}
-          keyboardType="numeric"
+  // Show the checkout screen (ScanAndGoScreen)
+  if (showCheckout) {
+    return (
+      <SwiftShoprProvider config={RETAILER_CONFIG}>
+        <ScanAndGoScreen
+          storeId={DEMO_STORE.id}
+          storeName={DEMO_STORE.name}
+          primaryColor={DEMO_STORE.primaryColor}
+          onComplete={handleCheckoutComplete}
+          onCancel={handleCheckoutCancel}
         />
-        <TouchableOpacity
-          style={styles.lookupButton}
-          onPress={lookupProduct}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.lookupButtonText}>Add</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+      </SwiftShoprProvider>
+    );
+  }
 
-      {/* Quick Add Buttons (Demo barcodes) */}
-      <View style={styles.quickAddContainer}>
-        <Text style={styles.quickAddLabel}>Quick Add (Demo):</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {['123456789012', '234567890123', '345678901234'].map(code => (
-            <TouchableOpacity
-              key={code}
-              style={styles.quickAddButton}
-              onPress={() => {
-                setBarcode(code);
-              }}
-            >
-              <Text style={styles.quickAddText}>{code.slice(-4)}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* Cart Items */}
-      <View style={styles.cartContainer}>
-        <Text style={styles.sectionTitle}>Cart ({cart.length} items)</Text>
-        {cart.length === 0 ? (
-          <Text style={styles.emptyCart}>Scan items to add to cart</Text>
-        ) : (
-          <FlatList
-            data={cart}
-            keyExtractor={(item) => item.barcode}
-            renderItem={({ item }) => (
-              <View style={styles.cartItem}>
-                <View style={styles.cartItemInfo}>
-                  <Text style={styles.itemName}>{item.name}</Text>
-                  <Text style={styles.itemBarcode}>{item.barcode}</Text>
-                </View>
-                <View style={styles.cartItemRight}>
-                  <Text style={styles.itemQty}>x{item.quantity}</Text>
-                  <Text style={styles.itemPrice}>${(item.price * item.quantity).toFixed(2)}</Text>
-                  <TouchableOpacity onPress={() => removeItem(item.barcode)}>
-                    <Text style={styles.removeButton}>X</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          />
-        )}
-      </View>
-
-      {/* Totals */}
-      <View style={styles.totalsContainer}>
-        <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>Subtotal</Text>
-          <Text style={styles.totalValue}>${subtotal.toFixed(2)}</Text>
-        </View>
-        <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>Tax (8%)</Text>
-          <Text style={styles.totalValue}>${tax.toFixed(2)}</Text>
-        </View>
-        <View style={[styles.totalRow, styles.grandTotal]}>
-          <Text style={styles.grandTotalLabel}>Total</Text>
-          <Text style={styles.grandTotalValue}>${total.toFixed(2)}</Text>
-        </View>
-      </View>
-
-      {/* Pay Button */}
-      <TouchableOpacity
-        style={[styles.payButton, cart.length === 0 && styles.payButtonDisabled]}
-        onPress={startPayment}
-        disabled={cart.length === 0 || loading}
-      >
-        <Text style={styles.payButtonText}>
-          Pay with SwiftShopr
-        </Text>
-        <Text style={styles.payButtonSubtext}>Powered by swiftshopr-payments</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  // Render payment screen
-  const renderPayment = () => (
-    <View style={styles.screenContainer}>
-      <View style={styles.header}>
-        <Text style={styles.screenTitle}>Payment</Text>
-      </View>
-
-      <View style={styles.paymentInfo}>
-        <Text style={styles.paymentLabel}>Amount Due</Text>
-        <Text style={styles.paymentAmount}>${total.toFixed(2)}</Text>
-
-        <View style={styles.intentInfo}>
-          <Text style={styles.intentLabel}>Payment Intent</Text>
-          <Text style={styles.intentId}>{paymentIntent?.id?.slice(0, 8)}...</Text>
-        </View>
-
-        <Text style={styles.paymentInstructions}>
-          In a real scenario, the customer would now pay via USDC.
-          For this demo, tap "Simulate Payment" to complete.
-        </Text>
-      </View>
-
-      <TouchableOpacity
-        style={styles.simulateButton}
-        onPress={completePayment}
-        disabled={loading}
-      >
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.simulateButtonText}>Simulate Payment Complete</Text>
-        )}
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.cancelButton}
-        onPress={() => setScreen('cart')}
-      >
-        <Text style={styles.cancelButtonText}>Cancel</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  // Render receipt screen
-  const renderReceipt = () => (
-    <ScrollView style={styles.screenContainer}>
-      <View style={styles.receiptContainer}>
-        <View style={styles.receiptHeader}>
-          <Text style={styles.receiptTitle}>E-Receipt</Text>
-          <Text style={styles.receiptStore}>{DEMO_STORE.name}</Text>
-        </View>
-
-        {/* Verification Code - Large for employee */}
-        <View style={styles.verificationBox}>
-          <Text style={styles.verificationLabel}>VERIFICATION CODE</Text>
-          <Text style={styles.verificationCode}>{receipt?.verificationCode}</Text>
-          <Text style={styles.verificationHint}>Show this to store employee</Text>
-        </View>
-
-        {/* Receipt Details */}
-        <View style={styles.receiptDetails}>
-          <Text style={styles.receiptId}>Receipt: {receipt?.receiptId}</Text>
-          <Text style={styles.receiptDate}>
-            {new Date(receipt?.createdAt).toLocaleString()}
-          </Text>
-        </View>
-
-        {/* Items */}
-        <View style={styles.receiptItems}>
-          <Text style={styles.receiptSectionTitle}>Items</Text>
-          {receipt?.items?.map((item, index) => (
-            <View key={index} style={styles.receiptItem}>
-              <Text style={styles.receiptItemName}>
-                {item.name} x{item.quantity}
-              </Text>
-              <Text style={styles.receiptItemPrice}>${item.total.toFixed(2)}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Totals */}
-        <View style={styles.receiptTotals}>
-          <View style={styles.receiptTotalRow}>
-            <Text>Subtotal</Text>
-            <Text>${receipt?.subtotal?.toFixed(2)}</Text>
-          </View>
-          <View style={styles.receiptTotalRow}>
-            <Text>Tax</Text>
-            <Text>${receipt?.tax?.toFixed(2)}</Text>
-          </View>
-          <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
-            <Text style={styles.receiptGrandTotalText}>Total</Text>
-            <Text style={styles.receiptGrandTotalText}>${receipt?.total?.toFixed(2)}</Text>
-          </View>
-        </View>
-
-        {/* Payment Confirmation */}
-        <View style={styles.paymentConfirmation}>
-          <Text style={styles.paymentConfirmTitle}>Payment Confirmed</Text>
-          {receipt?.payment?.txHash && (
-            <Text style={styles.txHash}>
-              TX: {receipt.payment.txHash.slice(0, 10)}...
-            </Text>
-          )}
-        </View>
-
-        {/* New Transaction Button */}
-        <TouchableOpacity
-          style={styles.newTransactionButton}
-          onPress={newTransaction}
-        >
-          <Text style={styles.newTransactionText}>New Transaction</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
-  );
-
+  // Home screen - Retailer's landing page
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
-      {screen === 'cart' && renderCart()}
-      {screen === 'payment' && renderPayment()}
-      {screen === 'receipt' && renderReceipt()}
+
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.storeName}>{DEMO_STORE.name}</Text>
+        <Text style={styles.storeId}>Store ID: {DEMO_STORE.id}</Text>
+      </View>
+
+      {/* Main Content */}
+      <View style={styles.content}>
+        <View style={styles.heroSection}>
+          <Text style={styles.heroIcon}>🛒</Text>
+          <Text style={styles.heroTitle}>Scan & Go</Text>
+          <Text style={styles.heroSubtitle}>
+            Skip the checkout line. Scan items with your phone and pay instantly with USDC.
+          </Text>
+        </View>
+
+        {/* Features */}
+        <View style={styles.features}>
+          <View style={styles.featureItem}>
+            <Text style={styles.featureIcon}>📷</Text>
+            <View style={styles.featureText}>
+              <Text style={styles.featureTitle}>Scan Products</Text>
+              <Text style={styles.featureDesc}>Use your camera to scan barcodes</Text>
+            </View>
+          </View>
+
+          <View style={styles.featureItem}>
+            <Text style={styles.featureIcon}>💳</Text>
+            <View style={styles.featureText}>
+              <Text style={styles.featureTitle}>Pay with USDC</Text>
+              <Text style={styles.featureDesc}>Fast, secure crypto payments</Text>
+            </View>
+          </View>
+
+          <View style={styles.featureItem}>
+            <Text style={styles.featureIcon}>🧾</Text>
+            <View style={styles.featureText}>
+              <Text style={styles.featureTitle}>Digital Receipt</Text>
+              <Text style={styles.featureDesc}>Show to employee on exit</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Last Receipt (if any) */}
+        {lastReceipt && (
+          <View style={styles.lastReceipt}>
+            <Text style={styles.lastReceiptTitle}>Last Transaction</Text>
+            <Text style={styles.lastReceiptDetail}>
+              {lastReceipt.itemCount} items • ${lastReceipt.total?.toFixed(2)}
+            </Text>
+            <Text style={styles.lastReceiptId}>
+              Receipt: {lastReceipt.receiptId || 'N/A'}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      {/* Start Shopping Button */}
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={[styles.startButton, { backgroundColor: DEMO_STORE.primaryColor }]}
+          onPress={() => setShowCheckout(true)}
+        >
+          <Text style={styles.startButtonText}>Start Shopping</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.poweredBy}>
+          Powered by SwiftShopr
+        </Text>
+      </View>
     </SafeAreaView>
   );
 }
 
+// ============================================
+// STYLES
+// ============================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  screenContainer: {
-    flex: 1,
-    padding: 16,
+    backgroundColor: '#F9FAFB',
   },
   header: {
-    marginBottom: 16,
-    paddingBottom: 12,
+    padding: 20,
+    paddingTop: 10,
+    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
+    borderBottomColor: '#E5E7EB',
   },
   storeName: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
+    color: '#111827',
   },
   storeId: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     marginTop: 4,
   },
-  screenTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-
-  // Lookup
-  lookupContainer: {
-    flexDirection: 'row',
-    marginBottom: 12,
-  },
-  barcodeInput: {
+  content: {
     flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#ddd',
+    padding: 20,
   },
-  lookupButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    paddingHorizontal: 20,
-    marginLeft: 8,
-    justifyContent: 'center',
-  },
-  lookupButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-
-  // Quick Add
-  quickAddContainer: {
-    marginBottom: 16,
-  },
-  quickAddLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 8,
-  },
-  quickAddButton: {
-    backgroundColor: '#e0e0e0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginRight: 8,
-  },
-  quickAddText: {
-    fontSize: 12,
-    color: '#333',
-  },
-
-  // Cart
-  cartContainer: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 12,
-    color: '#333',
-  },
-  emptyCart: {
-    textAlign: 'center',
-    color: '#999',
+  heroSection: {
+    alignItems: 'center',
     paddingVertical: 40,
   },
-  cartItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+  heroIcon: {
+    fontSize: 64,
+    marginBottom: 16,
   },
-  cartItemInfo: {
+  heroTitle: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  heroSubtitle: {
+    fontSize: 16,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 24,
+    paddingHorizontal: 20,
+  },
+  features: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 20,
+    marginTop: 20,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  featureIcon: {
+    fontSize: 28,
+    marginRight: 16,
+  },
+  featureText: {
     flex: 1,
   },
-  itemName: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
+  featureTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
   },
-  itemBarcode: {
-    fontSize: 11,
-    color: '#999',
+  featureDesc: {
+    fontSize: 14,
+    color: '#6B7280',
     marginTop: 2,
   },
-  cartItemRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  itemQty: {
-    fontSize: 14,
-    color: '#666',
-  },
-  itemPrice: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    minWidth: 60,
-    textAlign: 'right',
-  },
-  removeButton: {
-    color: '#ff3b30',
-    fontWeight: 'bold',
-    fontSize: 16,
-    paddingHorizontal: 8,
-  },
-
-  // Totals
-  totalsContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-  },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  totalLabel: {
-    color: '#666',
-  },
-  totalValue: {
-    color: '#333',
-  },
-  grandTotal: {
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-    paddingTop: 8,
-    marginTop: 4,
-  },
-  grandTotalLabel: {
-    fontWeight: 'bold',
-    fontSize: 18,
-    color: '#333',
-  },
-  grandTotalValue: {
-    fontWeight: 'bold',
-    fontSize: 18,
-    color: '#333',
-  },
-
-  // Pay Button
-  payButton: {
-    backgroundColor: '#34C759',
+  lastReceipt: {
+    backgroundColor: '#ECFDF5',
     borderRadius: 12,
     padding: 16,
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  lastReceiptTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#065F46',
+  },
+  lastReceiptDetail: {
+    fontSize: 16,
+    color: '#047857',
+    marginTop: 4,
+  },
+  lastReceiptId: {
+    fontSize: 12,
+    color: '#6EE7B7',
+    marginTop: 4,
+  },
+  footer: {
+    padding: 20,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  startButton: {
+    paddingVertical: 18,
+    borderRadius: 14,
     alignItems: 'center',
   },
-  payButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  payButtonText: {
+  startButtonText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
   },
-  payButtonSubtext: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 12,
-    marginTop: 4,
-  },
-
-  // Payment Screen
-  paymentInfo: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  paymentLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  paymentAmount: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#333',
-    marginVertical: 16,
-  },
-  intentInfo: {
-    marginTop: 16,
-    alignItems: 'center',
-  },
-  intentLabel: {
-    fontSize: 12,
-    color: '#999',
-  },
-  intentId: {
-    fontSize: 14,
-    color: '#666',
-    fontFamily: 'monospace',
-  },
-  paymentInstructions: {
-    marginTop: 24,
+  poweredBy: {
     textAlign: 'center',
-    color: '#666',
-    lineHeight: 20,
-  },
-  simulateButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  simulateButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  cancelButton: {
-    padding: 16,
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    color: '#ff3b30',
-    fontSize: 16,
-  },
-
-  // Receipt Screen
-  receiptContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-  },
-  receiptHeader: {
-    alignItems: 'center',
-    marginBottom: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  receiptTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  receiptStore: {
-    fontSize: 16,
-    color: '#666',
-    marginTop: 4,
-  },
-  verificationBox: {
-    backgroundColor: '#f0f9ff',
-    borderRadius: 12,
-    padding: 20,
-    alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 2,
-    borderColor: '#007AFF',
-  },
-  verificationLabel: {
+    marginTop: 12,
     fontSize: 12,
-    color: '#007AFF',
-    fontWeight: '600',
-  },
-  verificationCode: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#007AFF',
-    letterSpacing: 4,
-    marginVertical: 8,
-  },
-  verificationHint: {
-    fontSize: 12,
-    color: '#666',
-  },
-  receiptDetails: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  receiptId: {
-    fontSize: 12,
-    color: '#999',
-    fontFamily: 'monospace',
-  },
-  receiptDate: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 4,
-  },
-  receiptItems: {
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  receiptSectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  receiptItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  receiptItemName: {
-    color: '#333',
-  },
-  receiptItemPrice: {
-    color: '#333',
-    fontWeight: '500',
-  },
-  receiptTotals: {
-    marginBottom: 16,
-  },
-  receiptTotalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  receiptGrandTotal: {
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-    paddingTop: 8,
-    marginTop: 4,
-  },
-  receiptGrandTotalText: {
-    fontWeight: 'bold',
-    fontSize: 18,
-  },
-  paymentConfirmation: {
-    backgroundColor: '#d4edda',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  paymentConfirmTitle: {
-    color: '#155724',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  txHash: {
-    color: '#155724',
-    fontSize: 12,
-    marginTop: 4,
-    fontFamily: 'monospace',
-  },
-  newTransactionButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-  },
-  newTransactionText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+    color: '#9CA3AF',
   },
 });

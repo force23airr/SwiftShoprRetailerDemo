@@ -1,0 +1,38 @@
+{
+  "name": "@swiftshopr/sdk",
+  "version": "1.0.0",
+  "description": "SwiftShopr white-label USDC payments SDK for React Native - Scan & Go checkout",
+  "main": "index.js",
+  "module": "src/index.js",
+  "react-native": "src/index.js",
+  "private": true,
+  "files": [
+    "src",
+    "index.js",
+    "INTEGRATION_GUIDE.md",
+    "package.json"
+  ],
+  "keywords": [
+    "swiftshopr",
+    "usdc",
+    "payments",
+    "scan-and-go",
+    "checkout",
+    "react-native",
+    "expo",
+    "retail",
+    "pos"
+  ],
+  "dependencies": {
+    "@coinbase/cdp-core": "^0.23.0",
+    "@coinbase/cdp-hooks": "^0.23.0",
+    "expo-web-browser": "~15.0.9",
+    "viem": "^2.21.0"
+  },
+  "peerDependencies": {
+    "react": ">=18.2.0",
+    "react-native": ">=0.72.0",
+    "expo-camera": ">=15.0.0",
+    "expo-screen-capture": ">=8.0.0"
+  }
+}

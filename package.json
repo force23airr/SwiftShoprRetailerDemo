@@ -9,11 +9,16 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@coinbase/cdp-core": "^0.23.0",
+    "@coinbase/cdp-hooks": "^0.23.0",
     "expo": "~54.0.30",
+    "expo-camera": "~17.0.9",
+    "expo-screen-capture": "~8.0.9",
     "expo-status-bar": "~3.0.9",
+    "expo-web-browser": "~15.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "swiftshopr-payments": "^1.1.0"
+    "viem": "^2.21.0"
   },
   "private": true
 }
